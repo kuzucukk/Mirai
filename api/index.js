@@ -1,5 +1,5 @@
 const { createCanvas, loadImage, ImageData } = require('@napi-rs/canvas');
-const GIFEncoder = require('gifencoder');
+const GIFEncoder = require('gif-encoder-2');
 const { parseGIF, decompressFrames } = require('gifuct-js');
 
 export default async function handler(req, res) {
