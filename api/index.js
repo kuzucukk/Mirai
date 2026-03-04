@@ -1,6 +1,6 @@
-const { createCanvas, loadImage } = require('@napi-rs/canvas');
+const { createCanvas, loadImage, ImageData } = require('@napi-rs/canvas');
 const GIFEncoder = require('gifencoder');
-const gifFrames = require('gif-frames');
+const { parseGIF, decompressFrames } = require('gifuct-js');
 
 export default async function handler(req, res) {
     if (req.method !== 'POST') {
@@ -16,7 +16,7 @@ export default async function handler(req, res) {
     try {
         const isGif = effect_url && effect_url.toLowerCase().endsWith('.gif');
 
-        // Kart ve çerçeveyi (varsa) eşzamanlı indiriyoruz
+        // Kart ve çerçeveyi indiriyoruz
         const [cardImage, frameImage] = await Promise.all([
             loadImage(card_url).catch(() => null),
             frame_url ? loadImage(frame_url).catch(() => null) : Promise.resolve(null)
@@ -32,42 +32,65 @@ export default async function handler(req, res) {
         const ctx = canvas.getContext('2d');
 
         if (isGif) {
-            // === GIF İŞLEME AŞAMASI ===
+            // === SAF JAVASCRIPT İLE ÇÖKMEYEN GIF İŞLEME ===
+            const effectResp = await fetch(effect_url);
+            if (!effectResp.ok) throw new Error("Efekt GIF'i indirilemedi.");
+            const effectBuffer = await effectResp.arrayBuffer();
+            
+            // GIF'i parse et (gifuct-js)
+            const gif = parseGIF(effectBuffer);
+            const frames = decompressFrames(gif, true);
+
             const encoder = new GIFEncoder(width, height);
             encoder.start();
-            encoder.setRepeat(0); // Sonsuz döngü
-            encoder.setDelay(100); // Kareler arası ms hızı (100ms = 10fps)
-            encoder.setQuality(10); // Görüntü kalitesi (1 en iyi, 10 varsayılan)
+            encoder.setRepeat(0); 
+            encoder.setDelay(100); // Kareler arası hız
+            encoder.setQuality(10);
 
-            // GIF'in tüm karelerini ayıklıyoruz
-            const framesData = await gifFrames({ url: effect_url, frames: 'all', outputType: 'png', cumulative: true });
+            // GIF'in orijinal boyutlarında geçici bir tuval (Çözünürlük ve hizalama için)
+            const gifWidth = gif.lsd.width;
+            const gifHeight = gif.lsd.height;
+            const effectCanvas = createCanvas(gifWidth, gifHeight);
+            const effectCtx = effectCanvas.getContext('2d');
 
-            for (let i = 0; i < framesData.length; i++) {
-                const stream = framesData[i].getImage();
+            for (let i = 0; i < frames.length; i++) {
+                const frame = frames[i];
                 
-                // Buffer akışını topluyoruz
-                const chunkBuffer = await new Promise((resolve, reject) => {
-                    const chunks = [];
-                    stream.on('data', chunk => chunks.push(chunk));
-                    stream.on('end', () => resolve(Buffer.concat(chunks)));
-                    stream.on('error', reject);
-                });
+                // Bir önceki karenin temizlenme kuralı (Disposal Method)
+                if (i > 0 && frames[i - 1].disposalType === 2) {
+                    const prev = frames[i - 1];
+                    effectCtx.clearRect(prev.dims.left, prev.dims.top, prev.dims.width, prev.dims.height);
+                }
 
-                const effectImg = await loadImage(chunkBuffer);
+                // Sadece değişen pikselleri (patch) çiz
+                if (frame.dims.width > 0 && frame.dims.height > 0) {
+                    const patchCanvas = createCanvas(frame.dims.width, frame.dims.height);
+                    const patchCtx = patchCanvas.getContext('2d');
+                    
+                    const imageData = new ImageData(
+                        new Uint8ClampedArray(frame.patch),
+                        frame.dims.width,
+                        frame.dims.height
+                    );
+                    patchCtx.putImageData(imageData, 0, 0);
+                    effectCtx.drawImage(patchCanvas, frame.dims.left, frame.dims.top);
+                }
 
-                // Tuvali temizle ve sırayla katmanları çiz
+                // Ana karta geçiyoruz: Önce kartı çiz
                 ctx.clearRect(0, 0, width, height);
                 ctx.drawImage(cardImage, 0, 0, width, height);
 
+                // GIF'i kartın boyutuna otomatik ölçekleyerek Screen (Parlamak) efektiyle yansıt
                 ctx.globalCompositeOperation = 'screen';
-                ctx.drawImage(effectImg, 0, 0, width, height);
+                ctx.drawImage(effectCanvas, 0, 0, width, height);
                 ctx.globalCompositeOperation = 'source-over';
 
+                // En üste PNG çerçeveyi giydir
                 if (frameImage) {
                     ctx.drawImage(frameImage, 0, 0, width, height);
                 }
 
-                // Çizilen bu kareyi GIF motoruna ekle
+                // Oluşturulan bu kareyi GIF motoruna ekle
                 encoder.addFrame(ctx);
             }
 
@@ -79,7 +102,7 @@ export default async function handler(req, res) {
             return res.status(200).send(buffer);
 
         } else {
-            // === STANDART PNG İŞLEME AŞAMASI ===
+            // === STANDART HAREKETSİZ (PNG/JPG) İŞLEME ===
             const effectImage = effect_url ? await loadImage(effect_url).catch(() => null) : null;
 
             ctx.drawImage(cardImage, 0, 0, width, height);
