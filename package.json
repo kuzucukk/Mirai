@@ -1,5 +1,5 @@
 {
-  "name": "tcg-kozmetik-api",
+  "name": "mirai",
   "version": "1.0.0",
   "scripts": {
     "start": "node api/index.js"
