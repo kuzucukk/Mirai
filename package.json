@@ -5,6 +5,8 @@
     "start": "node api/index.js"
   },
   "dependencies": {
-    "@napi-rs/canvas": "^0.1.44"
+    "@napi-rs/canvas": "^0.1.44",
+    "gifencoder": "^2.0.1",
+    "gif-frames": "^1.0.1"
   }
 }
