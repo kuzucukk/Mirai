@@ -3,14 +3,15 @@ const GIFEncoder = require('gif-encoder-2');
 const { parseGIF, decompressFrames } = require('gifuct-js');
 
 export default async function handler(req, res) {
-    if (req.method !== 'POST') {
-        return res.status(405).json({ error: 'Sadece POST istekleri kabul edilir.' });
+    if (req.method !== 'GET') {
+        return res.status(405).json({ error: 'Sadece GET istekleri kabul edilir.' });
     }
 
-    const { card_url, frame_url, effect_url } = req.body;
+    // Parametreleri req.body yerine req.query üzerinden alıyoruz (GET mantığı)
+    const { card_url, frame_url, effect_url } = req.query;
 
     if (!card_url) {
-        return res.status(400).json({ error: 'card_url parametresi eksik.' });
+        return res.status(400).json({ error: 'card_url parametresi eksik. URL üzerinden ?card_url=... şeklinde gönderin.' });
     }
 
     try {
@@ -30,6 +31,11 @@ export default async function handler(req, res) {
         const height = cardImage.height;
         const canvas = createCanvas(width, height);
         const ctx = canvas.getContext('2d');
+
+        // Vercel Cache Ayarları: 
+        // s-maxage=31536000 (1 yıl boyunca Vercel CDN üzerinde önbellekte tutar)
+        // Aynı card_url, frame_url ve effect_url kombinasyonu tekrar istenirse sunucu yorulmaz, direkt önbellekten verilir.
+        res.setHeader('Cache-Control', 'public, s-maxage=31536000, stale-while-revalidate=86400');
 
         if (isGif) {
             // === SAF JAVASCRIPT İLE ÇÖKMEYEN GIF İŞLEME ===
@@ -81,9 +87,11 @@ export default async function handler(req, res) {
                 ctx.drawImage(cardImage, 0, 0, width, height);
 
                 // GIF'i kartın boyutuna otomatik ölçekleyerek Screen (Parlamak) efektiyle yansıt
-                ctx.globalCompositeOperation = 'screen';
-                ctx.drawImage(effectCanvas, 0, 0, width, height);
-                ctx.globalCompositeOperation = 'source-over';
+                if (effect_url) {
+                    ctx.globalCompositeOperation = 'screen';
+                    ctx.drawImage(effectCanvas, 0, 0, width, height);
+                    ctx.globalCompositeOperation = 'source-over';
+                }
 
                 // En üste PNG çerçeveyi giydir
                 if (frameImage) {
@@ -98,7 +106,6 @@ export default async function handler(req, res) {
             const buffer = encoder.out.getData();
 
             res.setHeader('Content-Type', 'image/gif');
-            res.setHeader('Cache-Control', 'public, max-age=86400');
             return res.status(200).send(buffer);
 
         } else {
@@ -119,7 +126,6 @@ export default async function handler(req, res) {
 
             const buffer = await canvas.encode('png');
             res.setHeader('Content-Type', 'image/png');
-            res.setHeader('Cache-Control', 'public, max-age=86400');
             return res.status(200).send(buffer);
         }
 
